@@ -493,7 +493,14 @@ export default function AuraApp() {
       });
       const body = await r.json();
       if (!r.ok) {
-        setError(typeof body?.error === "string" ? body.error : "Generation failed");
+        const base = typeof body?.error === "string" ? body.error : "Generation failed";
+        const issues = Array.isArray(body?.issues)
+          ? body.issues
+              .slice(0, 8)
+              .map((i: { path?: (string | number)[]; message?: string }) => `• ${(i.path ?? []).join(".") || "(root)"} — ${i.message ?? "invalid"}`)
+              .join("\n")
+          : "";
+        setError(issues ? `${base}\n\n${issues}` : base);
         setState("input");
         return;
       }
