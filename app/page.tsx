@@ -92,17 +92,23 @@ function PromptScreen({ onGenerate, loading, error }: { onGenerate: (prompt: str
   );
 }
 
-function GeneratingScreen({ stage }: { stage: string }) {
+function GeneratingScreen({ stage, pct, elapsedMs }: { stage: string; pct: number; elapsedMs: number }) {
+  const seconds = Math.floor(elapsedMs / 1000);
+  const clamped = Math.max(0, Math.min(100, pct));
   return (
-    <div className="min-h-screen grid place-items-center bg-zinc-950 text-white">
+    <div className="min-h-screen grid place-items-center bg-zinc-950 text-white px-6">
       <div className="w-full max-w-lg p-8 bg-zinc-900 border border-zinc-800 rounded-2xl">
-        <div className="flex items-center gap-3 mb-3 text-blue-400">
+        <div className="flex items-center gap-3 mb-2 text-blue-400">
           <I.Loader />
           <h2 className="text-xl font-semibold text-white">{stage}</h2>
         </div>
         <p className="text-zinc-400 text-sm">Researching patterns, generating tokens, assembling sitemap, drafting pages, validating imagery, and repairing the link graph. Typically 20–40 seconds.</p>
-        <div className="mt-6 h-1 rounded-full bg-zinc-800 overflow-hidden">
-          <div className="h-full bg-gradient-to-r from-blue-500 to-purple-500 w-2/3" />
+        <div className="mt-6 flex items-center justify-between text-xs font-mono text-zinc-400 mb-1.5">
+          <span>{clamped}%</span>
+          <span>{seconds}s elapsed</span>
+        </div>
+        <div className="h-1.5 rounded-full bg-zinc-800 overflow-hidden">
+          <div className="h-full bg-gradient-to-r from-blue-500 to-purple-500 transition-[width] duration-300 ease-out" style={{ width: `${clamped}%` }} />
         </div>
       </div>
     </div>
@@ -481,31 +487,97 @@ export default function AuraApp() {
   const [state, setState] = useState<"input" | "generating" | "dashboard">("input");
   const [project, setProject] = useState<AuraProject | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [stage, setStage] = useState("Contacting OpenAI");
+  const [pct, setPct] = useState(0);
+  const [elapsedMs, setElapsedMs] = useState(0);
+
+  React.useEffect(() => {
+    if (state !== "generating") return;
+    const start = Date.now();
+    setElapsedMs(0);
+    const id = setInterval(() => setElapsedMs(Date.now() - start), 250);
+    return () => clearInterval(id);
+  }, [state]);
 
   const handleGenerate = async (prompt: string) => {
     setError(null);
+    setStage("Contacting OpenAI");
+    setPct(0);
     setState("generating");
+
     try {
       const r = await fetch("/api/generate", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Accept: "application/x-ndjson" },
         body: JSON.stringify({ prompt }),
       });
-      const body = await r.json();
-      if (!r.ok) {
-        const base = typeof body?.error === "string" ? body.error : "Generation failed";
-        const issues = Array.isArray(body?.issues)
-          ? body.issues
+
+      if (!r.ok || !r.body) {
+        let msg = `Generation failed (${r.status})`;
+        try {
+          const body = await r.json();
+          if (typeof body?.error === "string") msg = body.error;
+        } catch {}
+        setError(msg);
+        setState("input");
+        return;
+      }
+
+      const reader = r.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let finalProject: AuraProject | null = null;
+      let finalError: { error: string; issues?: unknown } | null = null;
+
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          let ev: { kind: string; stage?: string; pct?: number; project?: AuraProject; error?: string; issues?: unknown };
+          try {
+            ev = JSON.parse(trimmed);
+          } catch {
+            continue;
+          }
+          if (ev.kind === "progress") {
+            if (typeof ev.stage === "string") setStage(ev.stage);
+            if (typeof ev.pct === "number") setPct(ev.pct);
+          } else if (ev.kind === "result" && ev.project) {
+            finalProject = ev.project;
+            setPct(100);
+          } else if (ev.kind === "error") {
+            finalError = { error: ev.error ?? "Generation failed", issues: ev.issues };
+          }
+        }
+      }
+
+      if (finalError) {
+        const base = finalError.error;
+        const issues = Array.isArray(finalError.issues)
+          ? (finalError.issues as Array<{ path?: (string | number)[]; message?: string }>)
               .slice(0, 8)
-              .map((i: { path?: (string | number)[]; message?: string }) => `• ${(i.path ?? []).join(".") || "(root)"} — ${i.message ?? "invalid"}`)
+              .map((i) => `• ${(i.path ?? []).join(".") || "(root)"} — ${i.message ?? "invalid"}`)
               .join("\n")
           : "";
         setError(issues ? `${base}\n\n${issues}` : base);
         setState("input");
         return;
       }
-      setProject(body as AuraProject);
-      setState("dashboard");
+
+      if (finalProject) {
+        setProject(finalProject);
+        setState("dashboard");
+        return;
+      }
+
+      setError("Stream ended without a result.");
+      setState("input");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setState("input");
@@ -519,7 +591,7 @@ export default function AuraApp() {
   };
 
   if (state === "input") return <PromptScreen onGenerate={handleGenerate} loading={false} error={error} />;
-  if (state === "generating") return <GeneratingScreen stage="Architecting via LLM" />;
+  if (state === "generating") return <GeneratingScreen stage={stage} pct={pct} elapsedMs={elapsedMs} />;
   if (state === "dashboard" && project) return <Dashboard project={project} onReset={handleReset} />;
   return null;
 }
