@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 import { AuraProjectSchema, type AuraProject } from "@/lib/schema";
 import { DESIGN_ARCHITECT_SYSTEM_PROMPT } from "@/lib/system-prompt";
 import { validateAndRepairProject } from "@/lib/pipeline/repair";
+import { normalizeAuraProject } from "@/lib/pipeline/normalize";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -70,6 +71,7 @@ export async function POST(req: NextRequest) {
 
     try {
       parsed = JSON.parse(raw);
+      parsed = normalizeAuraProject(parsed);
     } catch {
       input.push({
         role: "user",
