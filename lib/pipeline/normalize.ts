@@ -140,5 +140,92 @@ export function normalizeAuraProject(input: unknown): unknown {
     };
   }
 
+  // Normalize pages: synthesize missing id/path/name/title/description and
+  // recursively normalize each section's id + common missing fields.
+  const slugify = (s: string) =>
+    s
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "page";
+
+  if (Array.isArray(p.pages)) {
+    p.pages = (p.pages as Dict[]).map((rawPage, i) => {
+      const pg: Dict = { ...rawPage };
+      const name =
+        (typeof pg.name === "string" && pg.name) ||
+        (typeof pg.title === "string" && pg.title) ||
+        (i === 0 ? "Home" : `Page ${i + 1}`);
+      pg.name = name;
+      if (typeof pg.title !== "string" || !pg.title) pg.title = name;
+      if (typeof pg.description !== "string") pg.description = name;
+      if (typeof pg.id !== "string" || !pg.id) pg.id = `page-${slugify(name)}`;
+      if (typeof pg.path !== "string" || !pg.path) {
+        pg.path = i === 0 ? "/" : `/${slugify(name)}`;
+      }
+      if (Array.isArray(pg.sections)) {
+        pg.sections = (pg.sections as Dict[]).map((rawSec, j) => {
+          const s: Dict = { ...rawSec };
+          if (typeof s.id !== "string" || !s.id) {
+            const t = typeof s.type === "string" ? s.type : "section";
+            s.id = `${pg.id}-${t}-${j}`;
+          }
+          // stats: each item must have a `value` string
+          if (s.type === "stats" && Array.isArray(s.items)) {
+            s.items = (s.items as Dict[]).map((it) => {
+              const item: Dict = { ...it };
+              if (typeof item.value !== "string") {
+                const n = item.value;
+                item.value =
+                  typeof n === "number" ? String(n) : typeof n === "string" ? n : "\u2014";
+              }
+              if (typeof item.label !== "string") item.label = "";
+              return item;
+            });
+          }
+          return s;
+        });
+      } else {
+        pg.sections = [];
+      }
+      return pg;
+    });
+  }
+
+  // Synthesize sitemap from pages if missing or empty.
+  const pagesArr = Array.isArray(p.pages) ? (p.pages as Dict[]) : [];
+  const hasSitemap =
+    Array.isArray(p.sitemap) && (p.sitemap as unknown[]).length > 0;
+  if (!hasSitemap && pagesArr.length > 0) {
+    p.sitemap = pagesArr.map((pg) => ({
+      id: `sm-${pg.id}`,
+      name: pg.name as string,
+      path: pg.path as string,
+      description: pg.description as string | undefined,
+    }));
+  } else if (Array.isArray(p.sitemap)) {
+    p.sitemap = (p.sitemap as Dict[]).map((n, i) => {
+      const node: Dict = { ...n };
+      if (typeof node.path !== "string" || !node.path) {
+        node.path = pagesArr[i]?.path as string | undefined ?? "/";
+      }
+      if (typeof node.name !== "string" || !node.name) {
+        node.name = (pagesArr[i]?.name as string) ?? `Page ${i + 1}`;
+      }
+      if (typeof node.id !== "string" || !node.id) {
+        node.id = `sm-${slugify(node.name as string)}`;
+      }
+      return node;
+    });
+  }
+
+  // Ensure imagery is an array (schema requires it, even if empty).
+  if (!Array.isArray(p.imagery)) p.imagery = [];
+
+  // Top-level string defaults.
+  if (typeof p.name !== "string" || !p.name) p.name = "Untitled Project";
+  if (typeof p.tagline !== "string") p.tagline = "";
+  if (typeof p.description !== "string") p.description = "";
+  if (typeof p.category !== "string") p.category = "Web App";
+
   return p;
 }
