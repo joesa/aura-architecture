@@ -136,6 +136,16 @@ export function normalizeAuraProject(input: unknown): unknown {
   }
 
   // Ensure research exists (route schema requires it)
+  const toStr = (v: unknown, fallback: string): string => {
+    if (typeof v === "string") return v;
+    if (Array.isArray(v)) return v.filter((x) => typeof x === "string").join(", ") || fallback;
+    return fallback;
+  };
+  const toStrArr = (v: unknown): string[] => {
+    if (Array.isArray(v)) return v.map((x) => (typeof x === "string" ? x : String(x)));
+    if (typeof v === "string") return [v];
+    return [];
+  };
   if (!p.research || typeof p.research !== "object") {
     p.research = {
       category: (p.category as string) ?? "Web App",
@@ -144,6 +154,14 @@ export function normalizeAuraProject(input: unknown): unknown {
       audience: "General",
       tone: "Professional",
     };
+  } else {
+    const r = { ...(p.research as Dict) };
+    r.category = toStr(r.category, typeof p.category === "string" ? p.category : "Web App");
+    r.audience = toStr(r.audience, "General");
+    r.tone = toStr(r.tone, "Professional");
+    r.inspirations = toStrArr(r.inspirations);
+    r.conventions = toStrArr(r.conventions);
+    p.research = r;
   }
 
   // Normalize pages: synthesize missing id/path/name/title/description and
@@ -175,6 +193,33 @@ export function normalizeAuraProject(input: unknown): unknown {
             const t = typeof s.type === "string" ? s.type : "section";
             s.id = `${pg.id}-${t}-${j}`;
           }
+          // featureGrid / steps / bento: each item needs a `description` string
+          if ((s.type === "featureGrid" || s.type === "steps" || s.type === "bento") && Array.isArray(s.items)) {
+            s.items = (s.items as Dict[]).map((it) => {
+              const item: Dict = { ...it };
+              if (typeof item.title !== "string") {
+                item.title = typeof (item as Dict).name === "string" ? ((item as Dict).name as string) : "";
+              }
+              if (typeof item.description !== "string") {
+                const alt = (item as Dict).body ?? (item as Dict).text ?? (item as Dict).summary;
+                item.description = typeof alt === "string" ? alt : "";
+              }
+              if (s.type === "featureGrid" && typeof item.icon !== "string") item.icon = "✨";
+              return item;
+            });
+          }
+          // faq: items need question/answer
+          if (s.type === "faq" && Array.isArray(s.items)) {
+            s.items = (s.items as Dict[]).map((it) => {
+              const item: Dict = { ...it };
+              if (typeof item.question !== "string") item.question = "";
+              if (typeof item.answer !== "string") {
+                const alt = (item as Dict).response ?? (item as Dict).body;
+                item.answer = typeof alt === "string" ? alt : "";
+              }
+              return item;
+            });
+          }
           // stats: each item must have a `value` string
           if (s.type === "stats" && Array.isArray(s.items)) {
             s.items = (s.items as Dict[]).map((it) => {
@@ -188,9 +233,10 @@ export function normalizeAuraProject(input: unknown): unknown {
               return item;
             });
           }
-          // logoCloud: logos must be plain strings
-          if (s.type === "logoCloud" && Array.isArray(s.logos)) {
-            s.logos = (s.logos as unknown[]).map((l, idx) => {
+          // logoCloud: logos must be plain strings, eyebrow required
+          if (s.type === "logoCloud") {
+            const raw = Array.isArray(s.logos) ? (s.logos as unknown[]) : [];
+            const logos = raw.map((l, idx) => {
               if (typeof l === "string") return l;
               if (l && typeof l === "object") {
                 const o = l as Dict;
@@ -200,10 +246,9 @@ export function normalizeAuraProject(input: unknown): unknown {
               }
               return `Brand ${idx + 1}`;
             });
+            while (logos.length < 4) logos.push(`Brand ${logos.length + 1}`);
+            s.logos = logos;
             if (typeof s.eyebrow !== "string") s.eyebrow = "Trusted by teams at";
-            while ((s.logos as unknown[]).length < 4) {
-              (s.logos as string[]).push(`Brand ${(s.logos as unknown[]).length + 1}`);
-            }
           }
           // testimonial: items must have quote/author/role strings
           if (s.type === "testimonial" && Array.isArray(s.items)) {
