@@ -96,19 +96,18 @@ export function normalizeAuraProject(input: unknown): unknown {
         durationSlow: "360ms",
       };
     }
-    if (ds.radii && typeof ds.radii === "object") {
-      const r = ds.radii as Dict;
-      const base = typeof r.md === "string" ? r.md : "0.5rem";
+    {
+      const r = (ds.radii && typeof ds.radii === "object" ? ds.radii : {}) as Dict;
       ds.radii = {
         sm: typeof r.sm === "string" ? r.sm : "0.25rem",
-        md: base,
+        md: typeof r.md === "string" ? r.md : "0.5rem",
         lg: typeof r.lg === "string" ? r.lg : "0.75rem",
         xl: typeof r.xl === "string" ? r.xl : "1rem",
         full: typeof r.full === "string" ? r.full : "9999px",
       };
     }
-    if (ds.shadows && typeof ds.shadows === "object") {
-      const sh = ds.shadows as Dict;
+    {
+      const sh = (ds.shadows && typeof ds.shadows === "object" ? ds.shadows : {}) as Dict;
       ds.shadows = {
         sm: typeof sh.sm === "string" ? sh.sm : "0 1px 2px rgba(0,0,0,0.05)",
         md: typeof sh.md === "string" ? sh.md : "0 4px 6px -1px rgba(0,0,0,0.1)",
@@ -116,13 +115,20 @@ export function normalizeAuraProject(input: unknown): unknown {
         xl: typeof sh.xl === "string" ? sh.xl : "0 20px 25px -5px rgba(0,0,0,0.1)",
       };
     }
-    if (ds.typography && typeof ds.typography === "object") {
-      const t = { ...(ds.typography as Dict) };
+    {
+      const t = (ds.typography && typeof ds.typography === "object" ? { ...(ds.typography as Dict) } : {}) as Dict;
       if (!t.weights || typeof t.weights !== "object") {
         t.weights = { regular: 400, medium: 500, semibold: 600, bold: 700 };
       }
       if (!t.fontMono || typeof t.fontMono !== "string") t.fontMono = "JetBrains Mono";
       if (!t.fontSans || typeof t.fontSans !== "string") t.fontSans = "Inter";
+      const scaleDefault = {
+        xs: "0.75rem", sm: "0.875rem", base: "1rem", lg: "1.125rem",
+        xl: "1.25rem", "2xl": "1.5rem", "3xl": "1.875rem", "4xl": "2.25rem",
+        "5xl": "3rem", "6xl": "3.75rem",
+      };
+      const sc = (t.scale && typeof t.scale === "object" ? t.scale : {}) as Dict;
+      t.scale = { ...scaleDefault, ...Object.fromEntries(Object.entries(sc).filter(([, v]) => typeof v === "string")) };
       ds.typography = t;
     }
 
@@ -181,6 +187,86 @@ export function normalizeAuraProject(input: unknown): unknown {
               if (typeof item.label !== "string") item.label = "";
               return item;
             });
+          }
+          // logoCloud: logos must be plain strings
+          if (s.type === "logoCloud" && Array.isArray(s.logos)) {
+            s.logos = (s.logos as unknown[]).map((l, idx) => {
+              if (typeof l === "string") return l;
+              if (l && typeof l === "object") {
+                const o = l as Dict;
+                if (typeof o.name === "string") return o.name;
+                if (typeof o.label === "string") return o.label;
+                if (typeof o.text === "string") return o.text;
+              }
+              return `Brand ${idx + 1}`;
+            });
+            if (typeof s.eyebrow !== "string") s.eyebrow = "Trusted by teams at";
+            while ((s.logos as unknown[]).length < 4) {
+              (s.logos as string[]).push(`Brand ${(s.logos as unknown[]).length + 1}`);
+            }
+          }
+          // testimonial: items must have quote/author/role strings
+          if (s.type === "testimonial" && Array.isArray(s.items)) {
+            s.items = (s.items as Dict[]).map((it, idx) => {
+              const item: Dict = { ...it };
+              if (typeof item.quote !== "string") item.quote = "";
+              if (typeof item.author !== "string") {
+                item.author =
+                  typeof (item as Dict).name === "string"
+                    ? ((item as Dict).name as string)
+                    : `Customer ${idx + 1}`;
+              }
+              if (typeof item.role !== "string") {
+                item.role =
+                  typeof (item as Dict).title === "string"
+                    ? ((item as Dict).title as string)
+                    : "Customer";
+              }
+              return item;
+            });
+          }
+          // pricing: tiers must be an array with >=2 entries
+          if (s.type === "pricing") {
+            if (!Array.isArray(s.tiers)) s.tiers = [];
+            const tiers = (s.tiers as Dict[]).map((t, idx) => {
+              const tier: Dict = { ...t };
+              if (typeof tier.name !== "string") tier.name = `Tier ${idx + 1}`;
+              if (typeof tier.price !== "string") {
+                const pr = (tier as Dict).price;
+                tier.price = typeof pr === "number" ? `$${pr}` : "$0";
+              }
+              if (typeof tier.description !== "string") tier.description = "";
+              if (!Array.isArray(tier.features) || (tier.features as unknown[]).length < 1) {
+                tier.features = ["Feature included"];
+              } else {
+                tier.features = (tier.features as unknown[]).map((f) =>
+                  typeof f === "string"
+                    ? f
+                    : f && typeof f === "object" && typeof (f as Dict).text === "string"
+                    ? ((f as Dict).text as string)
+                    : String(f),
+                );
+              }
+              if (!tier.cta || typeof tier.cta !== "object") {
+                tier.cta = { label: "Get started", href: "/signup" };
+              } else {
+                const cta = tier.cta as Dict;
+                if (typeof cta.label !== "string") cta.label = "Get started";
+                if (typeof cta.href !== "string") cta.href = "/signup";
+              }
+              return tier;
+            });
+            while (tiers.length < 2) {
+              tiers.push({
+                name: tiers.length === 0 ? "Starter" : "Pro",
+                price: tiers.length === 0 ? "$0" : "$29",
+                description: "",
+                features: ["Feature included"],
+                cta: { label: "Get started", href: "/signup" },
+              });
+            }
+            s.tiers = tiers;
+            if (typeof s.headline !== "string") s.headline = "Pricing";
           }
           return s;
         });
