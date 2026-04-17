@@ -84,16 +84,26 @@ export function normalizeAuraProject(input: unknown): unknown {
 
     ds.colors = colors;
 
-    // Fill in commonly-omitted fields.
-    if (!ds.spacing || typeof ds.spacing !== "object") {
-      ds.spacing = { unit: 4, density: "comfortable" };
+    // Fill in commonly-omitted fields. Always merge so partial objects
+    // returned by the model get their missing sub-fields populated.
+    {
+      const sp = (ds.spacing && typeof ds.spacing === "object" ? (ds.spacing as Dict) : {}) as Dict;
+      const allowedDensity = new Set(["compact", "comfortable", "spacious"]);
+      ds.spacing = {
+        unit: typeof sp.unit === "number" ? sp.unit : 4,
+        density:
+          typeof sp.density === "string" && allowedDensity.has(sp.density)
+            ? sp.density
+            : "comfortable",
+      };
     }
-    if (!ds.motion || typeof ds.motion !== "object") {
+    {
+      const mo = (ds.motion && typeof ds.motion === "object" ? (ds.motion as Dict) : {}) as Dict;
       ds.motion = {
-        easing: "cubic-bezier(0.22, 1, 0.36, 1)",
-        durationFast: "150ms",
-        durationBase: "220ms",
-        durationSlow: "360ms",
+        easing: typeof mo.easing === "string" ? mo.easing : "cubic-bezier(0.22, 1, 0.36, 1)",
+        durationFast: typeof mo.durationFast === "string" ? mo.durationFast : "150ms",
+        durationBase: typeof mo.durationBase === "string" ? mo.durationBase : "220ms",
+        durationSlow: typeof mo.durationSlow === "string" ? mo.durationSlow : "360ms",
       };
     }
     {
@@ -349,8 +359,27 @@ export function normalizeAuraProject(input: unknown): unknown {
     });
   }
 
-  // Ensure imagery is an array (schema requires it, even if empty).
-  if (!Array.isArray(p.imagery)) p.imagery = [];
+  // Ensure imagery is an array of fully-shaped items.
+  if (!Array.isArray(p.imagery)) {
+    p.imagery = [];
+  } else {
+    p.imagery = (p.imagery as unknown[]).map((raw, i) => {
+      const item: Dict = raw && typeof raw === "object" ? { ...(raw as Dict) } : {};
+      if (typeof item.alt !== "string") {
+        const alt =
+          (item as Dict).description ??
+          (item as Dict).caption ??
+          (item as Dict).title ??
+          (item as Dict).name;
+        item.alt = typeof alt === "string" ? alt : `Image ${i + 1}`;
+      }
+      if (typeof item.src !== "string") {
+        const src = (item as Dict).url ?? (item as Dict).href;
+        item.src = typeof src === "string" ? src : "";
+      }
+      return item;
+    });
+  }
 
   // Top-level string defaults.
   if (typeof p.name !== "string" || !p.name) p.name = "Untitled Project";
