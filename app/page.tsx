@@ -92,7 +92,7 @@ function PromptScreen({ onGenerate, loading, error }: { onGenerate: (prompt: str
   );
 }
 
-function GeneratingScreen({ stage, pct, elapsedMs }: { stage: string; pct: number; elapsedMs: number }) {
+function GeneratingScreen({ stage, pct, detail, elapsedMs }: { stage: string; pct: number; detail?: string; elapsedMs: number }) {
   const seconds = Math.floor(elapsedMs / 1000);
   const clamped = Math.max(0, Math.min(100, pct));
   return (
@@ -104,7 +104,7 @@ function GeneratingScreen({ stage, pct, elapsedMs }: { stage: string; pct: numbe
         </div>
         <p className="text-zinc-400 text-sm">Researching patterns, generating tokens, assembling sitemap, drafting pages, validating imagery, and repairing the link graph. Typically 20–40 seconds.</p>
         <div className="mt-6 flex items-center justify-between text-xs font-mono text-zinc-400 mb-1.5">
-          <span>{clamped}%</span>
+          <span>{clamped}%{detail ? ` · ${detail}` : ""}</span>
           <span>{seconds}s elapsed</span>
         </div>
         <div className="h-1.5 rounded-full bg-zinc-800 overflow-hidden">
@@ -489,6 +489,7 @@ export default function AuraApp() {
   const [error, setError] = useState<string | null>(null);
   const [stage, setStage] = useState("Contacting OpenAI");
   const [pct, setPct] = useState(0);
+  const [detail, setDetail] = useState<string | undefined>(undefined);
   const [elapsedMs, setElapsedMs] = useState(0);
 
   React.useEffect(() => {
@@ -503,6 +504,7 @@ export default function AuraApp() {
     setError(null);
     setStage("Contacting OpenAI");
     setPct(0);
+    setDetail(undefined);
     setState("generating");
 
     try {
@@ -539,7 +541,7 @@ export default function AuraApp() {
         for (const line of lines) {
           const trimmed = line.trim();
           if (!trimmed) continue;
-          let ev: { kind: string; stage?: string; pct?: number; project?: AuraProject; error?: string; issues?: unknown };
+          let ev: { kind: string; stage?: string; pct?: number; detail?: string; project?: AuraProject; error?: string; issues?: unknown };
           try {
             ev = JSON.parse(trimmed);
           } catch {
@@ -548,6 +550,7 @@ export default function AuraApp() {
           if (ev.kind === "progress") {
             if (typeof ev.stage === "string") setStage(ev.stage);
             if (typeof ev.pct === "number") setPct(ev.pct);
+            if ("detail" in ev) setDetail(typeof ev.detail === "string" ? ev.detail : undefined);
           } else if (ev.kind === "result" && ev.project) {
             finalProject = ev.project;
             setPct(100);
@@ -591,7 +594,7 @@ export default function AuraApp() {
   };
 
   if (state === "input") return <PromptScreen onGenerate={handleGenerate} loading={false} error={error} />;
-  if (state === "generating") return <GeneratingScreen stage={stage} pct={pct} elapsedMs={elapsedMs} />;
+  if (state === "generating") return <GeneratingScreen stage={stage} pct={pct} detail={detail} elapsedMs={elapsedMs} />;
   if (state === "dashboard" && project) return <Dashboard project={project} onReset={handleReset} />;
   return null;
 }

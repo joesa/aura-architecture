@@ -8,7 +8,7 @@ import { normalizeAuraProject } from "@/lib/pipeline/normalize";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 120;
+export const maxDuration = 300;
 
 const PROVIDER = (process.env.LLM_PROVIDER ?? "anthropic").toLowerCase();
 const OPENAI_MODEL = process.env.OPENAI_MODEL ?? "gpt-4.1";
@@ -73,16 +73,17 @@ export async function POST(req: NextRequest) {
           const stageCap = attempt === 1 ? 68 : Math.min(68, stageBase + 30);
           send({ kind: "progress", stage: stageLabel, pct: stageBase });
 
-          let pct = stageBase;
-          const ping = setInterval(() => {
-            if (pct < stageCap) {
-              pct += 1;
-              send({ kind: "progress", stage: stageLabel, pct });
-            }
-          }, 700);
-
-          try {
-            if (PROVIDER === "openai") {
+          if (PROVIDER === "openai") {
+            // OpenAI Responses API — no live streaming wired up here, so we
+            // fall back to the heartbeat ticker for progress hints.
+            let pct = stageBase;
+            const ping = setInterval(() => {
+              if (pct < stageCap) {
+                pct += 1;
+                send({ kind: "progress", stage: stageLabel, pct });
+              }
+            }, 700);
+            try {
               const input = history.map((t) => ({
                 role: t.role,
                 content: [{ type: (t.role === "user" ? "input_text" : "output_text") as "input_text" | "output_text", text: t.text }],
@@ -90,28 +91,51 @@ export async function POST(req: NextRequest) {
               const resp = await openai!.responses.create({
                 model: OPENAI_MODEL,
                 instructions: DESIGN_ARCHITECT_SYSTEM_PROMPT,
-                // Cast is needed because the union shape differs per role.
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 input: input as any,
                 text: { format: { type: "json_object" } },
               });
               return resp.output_text ?? "";
+            } finally {
+              clearInterval(ping);
             }
-            // Anthropic
-            const resp = await anthropic!.messages.create({
-              model: ANTHROPIC_MODEL,
-              max_tokens: 16000,
-              system: DESIGN_ARCHITECT_SYSTEM_PROMPT,
-              messages: history.map((t) => ({ role: t.role, content: t.text })),
-            });
-            const text = resp.content
-              .filter((b): b is Anthropic.TextBlock => b.type === "text")
-              .map((b) => b.text)
-              .join("");
-            return text;
-          } finally {
-            clearInterval(ping);
           }
+
+          // Anthropic — use streaming so we can show live token progress and
+          // detect truncation via final stop_reason.
+          const ANTHROPIC_MAX_TOKENS = 32000;
+          let accumulated = "";
+          let lastUiPct = stageBase;
+          const stream = await anthropic!.messages.stream({
+            model: ANTHROPIC_MODEL,
+            max_tokens: ANTHROPIC_MAX_TOKENS,
+            system: DESIGN_ARCHITECT_SYSTEM_PROMPT,
+            messages: history.map((t) => ({ role: t.role, content: t.text })),
+          });
+          stream.on("text", (delta: string) => {
+            accumulated += delta;
+            // Rough tokens ≈ chars / 4. Map onto [stageBase, stageCap].
+            const approxTokens = Math.floor(accumulated.length / 4);
+            const frac = Math.min(1, approxTokens / (ANTHROPIC_MAX_TOKENS * 0.6));
+            const next = Math.min(stageCap, Math.floor(stageBase + frac * (stageCap - stageBase)));
+            if (next > lastUiPct) {
+              lastUiPct = next;
+              send({
+                kind: "progress",
+                stage: stageLabel,
+                pct: next,
+                detail: `~${approxTokens.toLocaleString()} tokens`,
+              });
+            }
+          });
+          const finalMessage = await stream.finalMessage();
+          if (finalMessage.stop_reason === "max_tokens") {
+            throw new Error(
+              `Claude response was truncated at ${ANTHROPIC_MAX_TOKENS} output tokens (stop_reason=max_tokens). ` +
+                `The JSON is incomplete. Try a simpler prompt or fewer pages.`,
+            );
+          }
+          return accumulated;
         };
 
         let parsed: unknown;
