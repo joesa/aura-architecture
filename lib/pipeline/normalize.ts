@@ -203,6 +203,24 @@ export function normalizeAuraProject(input: unknown): unknown {
             const t = typeof s.type === "string" ? s.type : "section";
             s.id = `${pg.id}-${t}-${j}`;
           }
+          // Synthesize a minimum-viable `items` array for section types that
+          // require one, when the model omitted it entirely or returned a
+          // non-array. Also pad to the schema's minimum length.
+          const MIN_ITEMS: Record<string, number> = {
+            featureGrid: 2,
+            bento: 3,
+            stats: 2,
+            testimonial: 1,
+            faq: 2,
+            steps: 2,
+          };
+          if (typeof s.type === "string" && s.type in MIN_ITEMS) {
+            if (!Array.isArray(s.items)) s.items = [];
+            const min = MIN_ITEMS[s.type];
+            while ((s.items as unknown[]).length < min) {
+              (s.items as Dict[]).push({});
+            }
+          }
           // featureGrid / steps / bento: each item needs a `description` string
           if ((s.type === "featureGrid" || s.type === "steps" || s.type === "bento") && Array.isArray(s.items)) {
             s.items = (s.items as Dict[]).map((it) => {
